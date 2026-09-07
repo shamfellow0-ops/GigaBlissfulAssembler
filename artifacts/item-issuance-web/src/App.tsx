@@ -63,8 +63,27 @@ const money = (value: number) => `₱${value.toLocaleString('en-PH', { minimumFr
 const dateTime = (value?: string) => value ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '—';
 const dateOnly = (value?: string) => value ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value)) : '—';
 const TAG_COLORS = ['#2F6A7F', '#D28B1F', '#B94A48', '#6F5B9A', '#3D8A68'];
+const PEOPLE_STORAGE_KEY = 'fieldstock-saved-people';
 
 function cn(...classes: Array<string | false | undefined>) { return classes.filter(Boolean).join(' '); }
+
+function readSavedPeople(): string[] {
+  try {
+    const stored = window.localStorage.getItem(PEOPLE_STORAGE_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePeople(people: string[]): void {
+  try {
+    window.localStorage.setItem(PEOPLE_STORAGE_KEY, JSON.stringify(people));
+  } catch {
+    // The API record still saves if browser storage is unavailable.
+  }
+}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
@@ -217,17 +236,40 @@ function ItemsPage() {
     </section></div>{modal && <ItemForm item={modal === 'new' ? undefined : modal} onClose={() => setModal(null)} />}</AppShell>;
 }
 
-function EntryForm({ entry, initialPerson = '', items, onClose }: { entry?: Entry; initialPerson?: string; items: Item[]; onClose: () => void }) {
+function EntryForm({ entry, initialPerson = '', knownPeople = [], items, onClose }: { entry?: Entry; initialPerson?: string; knownPeople?: string[]; items: Item[]; onClose: () => void }) {
   const client = useQueryClient(); const create = useCreateEntry(); const update = useUpdateEntry();
   const [form, setForm] = useState<EntryInput>({ person: entry?.person ?? initialPerson, itemId: entry?.itemId ?? items[0]?.id ?? '', quantity: entry?.quantity ?? 1, remarks: entry?.remarks ?? '', tagSymbol: entry?.tagSymbol ?? null, tagColor: entry?.tagColor ?? null });
+  const [savedPeople, setSavedPeople] = useState<string[]>(() => {
+    const people = [...(knownPeople ?? []), ...readSavedPeople()].map((person) => person.trim()).filter(Boolean);
+    return Array.from(new Map(people.map((person) => [person.toLocaleLowerCase(), person])).values()).sort((a, b) => a.localeCompare(b));
+  });
   const pending = create.isPending || update.isPending;
-  const submit = (e: FormEvent) => { e.preventDefault(); const done = () => { client.invalidateQueries({ queryKey: getListEntriesQueryKey() }); client.invalidateQueries({ queryKey: getGetReportSummaryQueryKey() }); onClose(); }; entry ? update.mutate({ id: entry.id, data: form }, { onSuccess: done }) : create.mutate({ data: form }, { onSuccess: done }); };
-  return <Modal title={entry ? 'Edit issuance record' : 'Record an issuance'} onClose={onClose}><form className="form-stack" onSubmit={submit}><label>Issued to<input autoFocus value={form.person} onChange={(e) => setForm({ ...form, person: e.target.value })} placeholder="Person or crew name" required data-testid="input-entry-person" /></label><label>Material<select value={form.itemId} onChange={(e) => setForm({ ...form, itemId: e.target.value })} required data-testid="select-entry-item">{items.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)} / {item.unit}</option>)}</select></label><div className="form-grid"><label>Quantity<input type="number" min="1" step="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} required data-testid="input-entry-quantity" /></label><label>Tag symbol <span className="optional">optional</span><input maxLength={4} value={form.tagSymbol ?? ''} onChange={(e) => setForm({ ...form, tagSymbol: e.target.value || null })} placeholder="A1" data-testid="input-entry-tag" /></label></div><div className="tag-picker"><span>Tag color <span className="optional">optional</span></span><div className="tag-swatches">{TAG_COLORS.map((color) => <button type="button" key={color} className={cn('tag-swatch', form.tagColor === color && 'tag-swatch-active')} style={{ background: color }} onClick={() => setForm({ ...form, tagColor: form.tagColor === color ? null : color })} aria-label={`Use tag color ${color}`} />)}</div></div><label>Remarks <span className="optional">optional</span><textarea rows={3} value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Job site, vehicle, or context" data-testid="input-entry-remarks" /></label><div className="form-actions"><button type="button" className="button button-ghost" onClick={onClose} data-testid="button-cancel-entry">Cancel</button><button type="submit" className="button button-primary" disabled={pending || !items.length} data-testid="button-save-entry">{pending ? 'Saving…' : <><Check size={16} /> Save issuance</>}</button></div></form></Modal>;
+  const rememberPerson = (value: string) => {
+    const person = value.trim();
+    if (!person) return;
+    setSavedPeople((current) => {
+      const next = [person, ...current.filter((saved) => saved.toLocaleLowerCase() !== person.toLocaleLowerCase())];
+      savePeople(next);
+      return next;
+    });
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const done = () => {
+      rememberPerson(form.person);
+      client.invalidateQueries({ queryKey: getListEntriesQueryKey() });
+      client.invalidateQueries({ queryKey: getGetReportSummaryQueryKey() });
+      onClose();
+    };
+    entry ? update.mutate({ id: entry.id, data: form }, { onSuccess: done }) : create.mutate({ data: form }, { onSuccess: done });
+  };
+  return <Modal title={entry ? 'Edit issuance record' : 'Record an issuance'} onClose={onClose}><form className="form-stack" onSubmit={submit}><label>Issued to<input autoFocus list="saved-person-names" value={form.person} onChange={(e) => setForm({ ...form, person: e.target.value })} placeholder="Person or crew name" required data-testid="input-entry-person" /><datalist id="saved-person-names">{savedPeople.map((person) => <option key={person} value={person} />)}</datalist><small className="field-hint">Names are remembered on this device after saving.</small></label><label>Material<select value={form.itemId} onChange={(e) => setForm({ ...form, itemId: e.target.value })} required data-testid="select-entry-item">{items.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.price)} / {item.unit}</option>)}</select></label><div className="form-grid"><label>Quantity<input type="number" min="1" step="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} required data-testid="input-entry-quantity" /></label><label>Tag symbol <span className="optional">optional</span><input maxLength={4} value={form.tagSymbol ?? ''} onChange={(e) => setForm({ ...form, tagSymbol: e.target.value || null })} placeholder="A1" data-testid="input-entry-tag" /></label></div><div className="tag-picker"><span>Tag color <span className="optional">optional</span></span><div className="tag-swatches">{TAG_COLORS.map((color) => <button type="button" key={color} className={cn('tag-swatch', form.tagColor === color && 'tag-swatch-active')} style={{ background: color }} onClick={() => setForm({ ...form, tagColor: form.tagColor === color ? null : color })} aria-label={`Use tag color ${color}`} />)}</div></div><label>Remarks <span className="optional">optional</span><textarea rows={3} value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Job site, vehicle, or context" data-testid="input-entry-remarks" /></label><div className="form-actions"><button type="button" className="button button-ghost" onClick={onClose} data-testid="button-cancel-entry">Cancel</button><button type="submit" className="button button-primary" disabled={pending || !items.length} data-testid="button-save-entry">{pending ? 'Saving…' : <><Check size={16} /> Save issuance</>}</button></div></form></Modal>;
 }
 
 function EntriesPage() {
   const entries = useListEntries(); const items = useListItems(); const client = useQueryClient(); const remove = useDeleteEntry(); const [modal, setModal] = useState<Entry | 'new' | null>(null); const [prefillPerson, setPrefillPerson] = useState(''); const [query, setQuery] = useState(''); const [tag, setTag] = useState('all');
   const list = useMemo(() => (entries.data ?? []).filter((x) => `${x.person} ${x.itemName} ${x.remarks}`.toLowerCase().includes(query.toLowerCase())).filter((x) => tag === 'all' || x.tagSymbol === tag), [entries.data, query, tag]);
+  const knownPeople = useMemo(() => Array.from(new Set((entries.data ?? []).map((entry) => entry.person))), [entries.data]);
   const tags = useMemo(() => Array.from(new Set((entries.data ?? []).map((e) => e.tagSymbol).filter(Boolean))) as string[], [entries.data]);
   const deleteEntry = (entry: Entry) => { if (window.confirm(`Delete the ${entry.quantity} × ${entry.itemName} issuance for ${entry.person}?`)) remove.mutate({ id: entry.id }, { onSuccess: () => { client.invalidateQueries({ queryKey: getListEntriesQueryKey() }); client.invalidateQueries({ queryKey: getGetReportSummaryQueryKey() }); } }); };
   const newEntry = (person = '') => { setPrefillPerson(person); setModal('new'); };
@@ -235,7 +277,7 @@ function EntriesPage() {
   return <AppShell><div className="page-wrap"><PageHeader eyebrow="Active issuance" title="Everything that left the shelf." detail="Search, annotate, and keep the active record precise." action={<button className="button button-primary" onClick={() => newEntry()} data-testid="button-record-entry"><Plus size={17} /> Record issuance</button>} />
     <section className="panel table-panel"><div className="toolbar entries-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search person, item, remarks" data-testid="input-search-entries" /></div><div className="filter-wrap"><Tag size={15} /><select value={tag} onChange={(e) => setTag(e.target.value)} data-testid="select-filter-tag"><option value="all">All tags</option>{tags.map((x) => <option key={x} value={x}>{x}</option>)}</select></div><span className="result-count">{list.length} active</span></div>
        {entries.isLoading ? <LoadingRows count={6} /> : entries.isError ? <ErrorState /> : list.length === 0 ? <EmptyState title={query || tag !== 'all' ? 'No matching records.' : 'Your active log is empty.'} detail={query || tag !== 'all' ? 'Clear the filter or try another search.' : 'Issue an item to create the first active record.'} action={<button className="button button-secondary" onClick={() => newEntry()} data-testid="button-empty-record-entry"><Plus size={16} /> Record issuance</button>} /> : <div className="entry-list full-list">{list.map((entry) => <div key={entry.id} className="entry-card"><EntryRow entry={entry} /><div className="entry-remarks">{entry.remarks || <span>No remarks attached</span>}</div><div className="entry-card-actions"><button className="button button-ghost repeat-button" onClick={() => newEntry(entry.person)}><Plus size={14} /> Add for {entry.person}</button><div className="row-actions"><button className="icon-button" onClick={() => setModal(entry)} aria-label={`Edit entry for ${entry.person}`} data-testid={`button-edit-entry-${entry.id}`}><Edit3 size={16} /></button><button className="icon-button danger-hover" onClick={() => deleteEntry(entry)} aria-label={`Delete entry for ${entry.person}`} data-testid={`button-delete-entry-${entry.id}`}><Trash2 size={16} /></button></div></div></div>)}</div>}
-     </section></div>{modal && <EntryForm entry={modal === 'new' ? undefined : modal} initialPerson={prefillPerson} items={items.data ?? []} onClose={closeModal} />}</AppShell>;
+      </section></div>{modal && <EntryForm entry={modal === 'new' ? undefined : modal} initialPerson={prefillPerson} knownPeople={knownPeople} items={items.data ?? []} onClose={closeModal} />}</AppShell>;
 }
 
 function ReportsPage() {

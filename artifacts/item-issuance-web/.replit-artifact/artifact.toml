@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/item-issuance-web/"
+title = "Item Issuance Web"
+description = "A field inventory tracker for recording issued items, reviewing per-person reports, and exporting issuance records for operational use."
+version = "1.0.0"
+id = "artifacts/item-issuance-web"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/item-issuance-web/" ]
+localPort = 21586
+
+[services.development]
+run = "pnpm --filter @workspace/item-issuance-web run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/item-issuance-web", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/item-issuance-web/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21586"
+BASE_PATH = "/item-issuance-web/"

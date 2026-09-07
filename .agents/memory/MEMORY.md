@@ -1,0 +1,1 @@
+- [Recovering a missing web artifact](source-recovery.md) — a live Vite preview can expose source maps and @fs files when the local artifact folder is absent.

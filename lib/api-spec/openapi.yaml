@@ -10,6 +10,14 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: items
+    description: Item catalog operations
+  - name: entries
+    description: Issuance record operations
+  - name: reports
+    description: Issuance summaries
+  - name: archives
+    description: Weekly catalogue archives
 paths:
   /healthz:
     get:
@@ -24,7 +32,220 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /items:
+    get:
+      operationId: listItems
+      tags: [items]
+      summary: List catalog items
+      responses:
+        "200":
+          description: Catalog items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Item"
+    post:
+      operationId: createItem
+      tags: [items]
+      summary: Create a catalog item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemInput"
+      responses:
+        "201":
+          description: Created item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+  /items/{id}:
+    patch:
+      operationId: updateItem
+      tags: [items]
+      summary: Update a catalog item
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ItemInput"
+      responses:
+        "200":
+          description: Updated item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteItem
+      tags: [items]
+      summary: Delete a catalog item and its active entries
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Item deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /entries:
+    get:
+      operationId: listEntries
+      tags: [entries]
+      summary: List active issuance entries
+      responses:
+        "200":
+          description: Active issuance entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Entry"
+    post:
+      operationId: createEntry
+      tags: [entries]
+      summary: Create an issuance entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryInput"
+      responses:
+        "201":
+          description: Created issuance entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+  /entries/{id}:
+    patch:
+      operationId: updateEntry
+      tags: [entries]
+      summary: Update an issuance entry
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryInput"
+      responses:
+        "200":
+          description: Updated issuance entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteEntry
+      tags: [entries]
+      summary: Delete an issuance entry
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Entry deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /reports/summary:
+    get:
+      operationId: getReportSummary
+      tags: [reports]
+      summary: Get active issuance totals
+      responses:
+        "200":
+          description: Active issuance summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSummary"
+  /archives:
+    get:
+      operationId: listArchives
+      tags: [archives]
+      summary: List weekly catalogue archives
+      responses:
+        "200":
+          description: Weekly archives
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Archive"
+    post:
+      operationId: archiveCurrentWeek
+      tags: [archives]
+      summary: Archive active entries and reset the active log
+      responses:
+        "201":
+          description: Created weekly archive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Archive"
+        "400":
+          description: No active entries to archive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /archives/{id}:
+    get:
+      operationId: getArchive
+      tags: [archives]
+      summary: Get an archive with its entries
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Weekly archive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Archive"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteArchive
+      tags: [archives]
+      summary: Delete a weekly archive
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Archive deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +254,85 @@ components:
           type: string
       required:
         - status
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    Item:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string }
+        price: { type: number }
+        unit: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, name, type, price, unit, createdAt]
+    ItemInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        type: { type: string, minLength: 1 }
+        price: { type: number, minimum: 0 }
+        unit: { type: string, minLength: 1 }
+      required: [name, type, price, unit]
+    Entry:
+      type: object
+      properties:
+        id: { type: string }
+        issuedAt: { type: string, format: date-time }
+        person: { type: string }
+        itemId: { type: string }
+        itemName: { type: string }
+        quantity: { type: number, minimum: 1 }
+        unitPrice: { type: number, minimum: 0 }
+        remarks: { type: string }
+        tagSymbol: { type: ["string", "null"] }
+        tagColor: { type: ["string", "null"] }
+      required: [id, issuedAt, person, itemId, itemName, quantity, unitPrice, remarks, tagSymbol, tagColor]
+    EntryInput:
+      type: object
+      properties:
+        person: { type: string }
+        itemId: { type: string }
+        quantity: { type: number, minimum: 1 }
+        remarks: { type: string }
+        tagSymbol: { type: ["string", "null"] }
+        tagColor: { type: ["string", "null"] }
+      required: [person, itemId, quantity, remarks, tagSymbol, tagColor]
+    PersonTotal:
+      type: object
+      properties:
+        person: { type: string }
+        quantity: { type: number }
+        total: { type: number }
+        lastIssuedAt: { type: string, format: date-time }
+      required: [person, quantity, total, lastIssuedAt]
+    ReportSummary:
+      type: object
+      properties:
+        totalQuantity: { type: number }
+        totalPrice: { type: number }
+        peopleCount: { type: number }
+        catalogCount: { type: number }
+        peopleTotals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonTotal"
+      required: [totalQuantity, totalPrice, peopleCount, catalogCount, peopleTotals]
+    Archive:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        archivedAt: { type: string, format: date-time }
+        totalQuantity: { type: number }
+        totalPrice: { type: number }
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+      required: [id, label, archivedAt, totalQuantity, totalPrice, entries]
 

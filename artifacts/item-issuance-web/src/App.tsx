@@ -64,6 +64,8 @@ const dateTime = (value?: string) => value ? new Intl.DateTimeFormat('en-US', { 
 const dateOnly = (value?: string) => value ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value)) : '—';
 const TAG_COLORS = ['#2F6A7F', '#D28B1F', '#B94A48', '#6F5B9A', '#3D8A68'];
 const PEOPLE_STORAGE_KEY = 'fieldstock-saved-people';
+const CATALOG_TYPES = ['Beverages', 'Snacks', 'Sanitary', 'Cleaning', 'Office supplies', 'Tools', 'Other'];
+const CATALOG_UNITS = ['Bottle', 'Pack', 'Sachet', 'Piece', 'Box', 'Can', 'Roll', 'Set', 'Other'];
 
 function cn(...classes: Array<string | false | undefined>) { return classes.filter(Boolean).join(' '); }
 
@@ -99,6 +101,18 @@ function groupEntriesByPerson(entries: Entry[]): Map<string, Entry[]> {
   return grouped;
 }
 
+function peopleTotalsFromEntries(entries: Entry[]): Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }> {
+  const totals = new Map<string, { person: string; quantity: number; total: number; lastIssuedAt: string }>();
+  for (const entry of entries) {
+    const current = totals.get(entry.person) ?? { person: entry.person, quantity: 0, total: 0, lastIssuedAt: entry.issuedAt };
+    current.quantity += entry.quantity;
+    current.total += entry.quantity * entry.unitPrice;
+    if (new Date(entry.issuedAt).getTime() > new Date(current.lastIssuedAt).getTime()) current.lastIssuedAt = entry.issuedAt;
+    totals.set(entry.person, current);
+  }
+  return Array.from(totals.values()).sort((a, b) => a.person.localeCompare(b.person));
+}
+
 function personItemsHtml(entries: Entry[], peopleTotals: Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }>): string {
   const grouped = groupEntriesByPerson(entries);
   return peopleTotals.map((person) => {
@@ -114,8 +128,8 @@ function exportHtml(entries: Entry[], peopleTotals: Array<{ person: string; quan
   return `<html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#182b35;padding:24px}h1{font-size:22px}h2{font-size:16px;margin-top:28px}h3{font-size:13px;margin:16px 0 6px}table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border:1px solid #ccd5d8;padding:7px;text-align:left;font-size:11px}th{background:#e9f0f1}td:nth-child(2),td:nth-child(4),td:nth-child(5),td:nth-child(6){text-align:right}.person-report{break-inside:avoid;margin-bottom:14px}</style></head><body><h1>${escapeHtml(title)}</h1><p>Generated ${escapeHtml(new Date().toLocaleString('en-PH'))}</p><h2>Items taken by person</h2>${peopleItems || '<p>No active issuance records.</p>'}<h2>Issuance records</h2><table><thead><tr><th>Issued</th><th>Person / crew</th><th>Item</th><th>Qty</th><th>Unit price</th><th>Total</th><th>Remarks</th><th>Tag</th></tr></thead><tbody>${rows || '<tr><td colspan="8">No active issuance records.</td></tr>'}</tbody></table><h2>Per-person totals</h2><table><thead><tr><th>Person / crew</th><th>Quantity</th><th>Total</th><th>Last issued</th></tr></thead><tbody>${totals || '<tr><td colspan="4">No totals yet.</td></tr>'}</tbody></table></body></html>`;
 }
 
-function downloadReport(entries: Entry[], peopleTotals: Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }>, extension: 'xls' | 'doc'): void {
-  const content = exportHtml(entries, peopleTotals, 'Item Issuance Tracker');
+function downloadReport(entries: Entry[], peopleTotals: Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }>, extension: 'xls' | 'doc', title = 'Item Issuance Tracker'): void {
+  const content = exportHtml(entries, peopleTotals, title);
   const mime = extension === 'xls' ? 'application/vnd.ms-excel' : 'application/msword';
   const url = URL.createObjectURL(new Blob([content], { type: `${mime};charset=utf-8` }));
   const link = document.createElement('a');
@@ -125,13 +139,13 @@ function downloadReport(entries: Entry[], peopleTotals: Array<{ person: string; 
   URL.revokeObjectURL(url);
 }
 
-function printReport(entries: Entry[], peopleTotals: Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }>): void {
+function printReport(entries: Entry[], peopleTotals: Array<{ person: string; quantity: number; total: number; lastIssuedAt: string }>, title = 'Item Issuance Tracker'): void {
   const printWindow = window.open('', '_blank', 'noopener,noreferrer');
   if (!printWindow) {
     window.print();
     return;
   }
-  printWindow.document.write(exportHtml(entries, peopleTotals, 'Item Issuance Tracker'));
+  printWindow.document.write(exportHtml(entries, peopleTotals, title));
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();
@@ -223,7 +237,9 @@ function ItemForm({ item, onClose }: { item?: Item; onClose: () => void }) {
   const [form, setForm] = useState<ItemInput>({ name: item?.name ?? '', type: item?.type ?? '', price: item?.price ?? 0, unit: item?.unit ?? '' });
   const pending = create.isPending || update.isPending;
   const submit = (e: FormEvent) => { e.preventDefault(); const done = () => { client.invalidateQueries({ queryKey: getListItemsQueryKey() }); client.invalidateQueries({ queryKey: getGetReportSummaryQueryKey() }); onClose(); }; item ? update.mutate({ id: item.id, data: form }, { onSuccess: done }) : create.mutate({ data: form }, { onSuccess: done }); };
-  return <Modal title={item ? 'Edit catalog item' : 'Add catalog item'} onClose={onClose}><form className="form-stack" onSubmit={submit}><label>Item name<input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. 3/4″ conduit" required data-testid="input-item-name" /></label><div className="form-grid"><label>Type<input value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Electrical" required data-testid="input-item-type" /></label><label>Unit<input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="each, box, roll" required data-testid="input-item-unit" /></label></div><label>Unit price<input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} required data-testid="input-item-price" /></label><div className="form-actions"><button type="button" className="button button-ghost" onClick={onClose} data-testid="button-cancel-item">Cancel</button><button type="submit" className="button button-primary" disabled={pending} data-testid="button-save-item">{pending ? 'Saving…' : <><Check size={16} /> Save item</>}</button></div></form></Modal>;
+  const typeOptions = item?.type && !CATALOG_TYPES.includes(item.type) ? [item.type, ...CATALOG_TYPES] : CATALOG_TYPES;
+  const unitOptions = item?.unit && !CATALOG_UNITS.includes(item.unit) ? [item.unit, ...CATALOG_UNITS] : CATALOG_UNITS;
+  return <Modal title={item ? 'Edit catalog item' : 'Add catalog item'} onClose={onClose}><form className="form-stack" onSubmit={submit}><label>Item name<input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Bottled water" required data-testid="input-item-name" /></label><div className="form-grid"><label>Type<select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} required data-testid="input-item-type"><option value="">Select a category</option>{typeOptions.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label>Unit<select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} required data-testid="input-item-unit"><option value="">Select a unit</option>{unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label></div><label>Unit price<input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} required data-testid="input-item-price" /></label><div className="form-actions"><button type="button" className="button button-ghost" onClick={onClose} data-testid="button-cancel-item">Cancel</button><button type="submit" className="button button-primary" disabled={pending} data-testid="button-save-item">{pending ? 'Saving…' : <><Check size={16} /> Save item</>}</button></div></form></Modal>;
 }
 
 function ItemsPage() {
@@ -299,7 +315,8 @@ function ArchiveCard({ archive }: { archive: Archive }) {
 function ArchiveDetailPage() {
   const { id = '' } = useParams<{ id: string }>(); const [, setLocation] = useLocation(); const archive = useGetArchive(id, { query: { enabled: Boolean(id), queryKey: getGetArchiveQueryKey(id) } }); const remove = useDeleteArchive(); const client = useQueryClient();
   const deleteArchive = () => { if (window.confirm('Delete this archive permanently?')) remove.mutate({ id }, { onSuccess: () => { client.invalidateQueries({ queryKey: getListArchivesQueryKey() }); setLocation('/reports'); } }); };
-  return <AppShell><div className="page-wrap">{archive.isLoading ? <LoadingRows count={5} /> : archive.isError || !archive.data ? <ErrorState /> : <><PageHeader eyebrow="Archive detail" title={archive.data.label} detail={`Closed ${dateOnly(archive.data.archivedAt)} · ${archive.data.entries.length} issuance records`} action={<div className="header-actions"><Link href="/reports" className="button button-ghost" data-testid="link-back-reports">Back to reports</Link><button className="button button-danger" onClick={deleteArchive} disabled={remove.isPending} data-testid="button-delete-archive"><Trash2 size={16} /> Delete archive</button></div>} /><div className="archive-summary"><StatCard label="Quantity issued" value={archive.data.totalQuantity} note="Archived records" icon={PackagePlus} tone="gold" /><StatCard label="Issued value" value={money(archive.data.totalPrice)} note="At recorded unit price" icon={DollarSign} tone="teal" /></div><section className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">Archived log</p><h2>Issuance records</h2></div></div><div className="entry-list full-list">{archive.data.entries.map((entry) => <EntryRow key={entry.id} entry={entry} />)}</div></section></>}</div></AppShell>;
+  const peopleTotals = archive.data ? peopleTotalsFromEntries(archive.data.entries) : [];
+  return <AppShell><div className="page-wrap">{archive.isLoading ? <LoadingRows count={5} /> : archive.isError || !archive.data ? <ErrorState /> : <><PageHeader eyebrow="Archive detail" title={archive.data.label} detail={`Closed ${dateOnly(archive.data.archivedAt)} · ${archive.data.entries.length} issuance records`} action={<div className="header-actions"><Link href="/reports" className="button button-ghost" data-testid="link-back-reports">Back to reports</Link><button className="button button-danger" onClick={deleteArchive} disabled={remove.isPending} data-testid="button-delete-archive"><Trash2 size={16} /> Delete archive</button></div>} /><div className="archive-summary"><StatCard label="Quantity issued" value={archive.data.totalQuantity} note="Archived records" icon={PackagePlus} tone="gold" /><StatCard label="Issued value" value={money(archive.data.totalPrice)} note="At recorded unit price" icon={DollarSign} tone="teal" /></div><section className="panel table-panel"><div className="panel-head"><div><p className="eyebrow">Archived log</p><h2>Issuance records</h2></div><div className="report-actions"><button className="button button-ghost" onClick={() => printReport(archive.data.entries, peopleTotals, archive.data.label)} data-testid="button-print-archive"><Printer size={15} /> Print / PDF</button><button className="button button-ghost" onClick={() => downloadReport(archive.data.entries, peopleTotals, 'xls', archive.data.label)} data-testid="button-export-archive-xls"><FileSpreadsheet size={15} /> Excel .xls</button><button className="button button-ghost" onClick={() => downloadReport(archive.data.entries, peopleTotals, 'doc', archive.data.label)} data-testid="button-export-archive-doc"><FileText size={15} /> Word .doc</button></div></div><div className="entry-list full-list">{archive.data.entries.map((entry) => <EntryRow key={entry.id} entry={entry} />)}</div></section></>}</div></AppShell>;
 }
 
 function Router() {

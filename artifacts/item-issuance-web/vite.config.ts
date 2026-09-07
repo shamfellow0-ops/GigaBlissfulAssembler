@@ -5,6 +5,8 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
+const port = 5173;
+
 export default defineConfig({
 base: '/GigaBlissfulAssembler/',
   plugins: [
